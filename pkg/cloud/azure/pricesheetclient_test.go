@@ -161,6 +161,16 @@ func TestPriceSheetClient_URLConstruction(t *testing.T) {
 	}
 }
 
+func TestPriceSheetClient_GetCurrentBillingPeriod_Validation(t *testing.T) {
+	cred := &mockCredential{}
+	client, err := NewPriceSheetClient("", cred, nil)
+	require.NoError(t, err)
+
+	_, err = client.GetCurrentBillingPeriod(context.Background())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "parameter client.billingAccountID cannot be empty")
+}
+
 // TestPriceSheetClient_MethodRegression ensures the HTTP method fix doesn't regress
 // This test would fail if someone accidentally changed POST back to GET
 func TestPriceSheetClient_MethodRegression(t *testing.T) {

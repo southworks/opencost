@@ -2,8 +2,10 @@ package azure
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -121,4 +123,63 @@ func (client *PriceSheetClient) downloadByBillingPeriodCreateRequest(ctx context
 	req.Raw().URL.RawQuery = reqQP.Encode()
 	req.Raw().Header["Accept"] = []string{"*/*"}
 	return req, nil
+}
+
+// billingPeriodsListTemplate is the URL template for listing billing periods.
+const billingPeriodsListTemplate = "/providers/Microsoft.Billing/billingAccounts/%s/billingPeriods"
+
+// billingPeriodsListResponse represents the response from the billing periods list API.
+type billingPeriodsListResponse struct {
+	Value []billingPeriodEntry `json:"value"`
+}
+
+// billingPeriodEntry represents a single billing period entry.
+type billingPeriodEntry struct {
+	Name string `json:"name"`
+}
+
+// GetCurrentBillingPeriod fetches the most recent billing period name from the
+// Azure Billing Periods List API. This handles both EA accounts (which use
+// "yyyyMM" format) and MCA accounts (which use "yyyyMM-1" format).
+// See: https://learn.microsoft.com/en-us/rest/api/billing/billing-periods/list
+func (client *PriceSheetClient) GetCurrentBillingPeriod(ctx context.Context) (string, error) {
+	if client.billingAccountID == "" {
+		return "", errors.New("parameter client.billingAccountID cannot be empty")
+	}
+	urlPath := fmt.Sprintf(billingPeriodsListTemplate, url.PathEscape(client.billingAccountID))
+	req, err := runtime.NewRequest(ctx, http.MethodGet, runtime.JoinPaths(client.host, urlPath))
+	if err != nil {
+		return "", fmt.Errorf("creating billing periods list request: %w", err)
+	}
+	reqQP := req.Raw().URL.Query()
+	reqQP.Set("api-version", "2020-05-01")
+	// The API returns billing periods in descending order by default, so $top=1 gives the most recent period.
+	reqQP.Set("$top", "1")
+	req.Raw().URL.RawQuery = reqQP.Encode()
+	req.Raw().Header["Accept"] = []string{"application/json"}
+
+	resp, err := client.pl.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("executing billing periods list request: %w", err)
+	}
+	defer resp.Body.Close()
+	if !runtime.HasStatusCode(resp, http.StatusOK) {
+		return "", runtime.NewResponseError(resp)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading billing periods response body: %w", err)
+	}
+
+	var result billingPeriodsListResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("parsing billing periods response: %w", err)
+	}
+
+	if len(result.Value) == 0 {
+		return "", errors.New("no billing periods returned from API")
+	}
+
+	return result.Value[0].Name, nil
 }

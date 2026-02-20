@@ -59,7 +59,18 @@ func (d *PriceSheetDownloader) getDownloadURL(ctx context.Context) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("creating pricesheet client: %w", err)
 	}
-	poller, err := client.BeginDownloadByBillingPeriod(ctx, currentBillingPeriod())
+
+	// Dynamically fetch the current billing period name from the API.
+	// This handles both EA accounts (yyyyMM) and MCA accounts (yyyyMM-1).
+	billingPeriod, err := client.GetCurrentBillingPeriod(ctx)
+	if err != nil {
+		// Fall back to the hardcoded format for backwards compatibility.
+		log.Warnf("failed to fetch billing period from API, falling back to default format: %s", err)
+		billingPeriod = currentBillingPeriod()
+	}
+	log.Infof("using billing period %q", billingPeriod)
+
+	poller, err := client.BeginDownloadByBillingPeriod(ctx, billingPeriod)
 	if err != nil {
 		return "", fmt.Errorf("beginning pricesheet download: %w", err)
 	}
